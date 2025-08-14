@@ -1,0 +1,25 @@
+fastapi
+uvicorn[standard]
+python-multipart
+SQLAlchemy>=2.0
+psycopg2-binary
+PyJWT
+opencv-python-headless
+numpy
+scikit-image
+scipy
+requests
+pydantic
+httpx
+segment-anything
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow  # Optional: for additional image handling
+python-dotenv  # Optional: for environment variable management
+pytest  # Optional: for testing
+pytest-asyncio  # Optional: for async testing
+pytest-cov  # Optional: for test coverage
+
+
+
+# pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
