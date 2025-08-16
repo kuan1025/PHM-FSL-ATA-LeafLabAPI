@@ -12,7 +12,11 @@ from .routers.admin import router as admin_router
 
 
 app = FastAPI(title="LeafLab API", version="v1")
-init_db()
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+
 app.include_router(auth_router)
 app.include_router(files_router)
 app.include_router(jobs_router)

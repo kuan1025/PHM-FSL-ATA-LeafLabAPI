@@ -1,13 +1,13 @@
 fastapi
 uvicorn[standard]
-python-multipart
+python-multipart==0.0.9
 SQLAlchemy>=2.0
 psycopg2-binary
 PyJWT
-opencv-python-headless
-numpy
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
 scikit-image
-scipy
+scipy==1.13.1
 requests
 pydantic
 httpx
@@ -19,6 +19,17 @@ python-dotenv  # Optional: for environment variable management
 pytest  # Optional: for testing
 pytest-asyncio  # Optional: for async testing
 pytest-cov  # Optional: for test coverage
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+
+
+
+
+
+
+
+
 
 
 

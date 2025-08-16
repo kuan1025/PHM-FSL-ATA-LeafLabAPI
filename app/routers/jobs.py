@@ -4,15 +4,17 @@ from datetime import datetime
 import uuid
 import cv2
 import numpy as np
+import io
 
+ 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Job, Result, File
 from ..deps import current_user
-from ..processing import heavy_pipeline
+from ..processing import heavy_pipeline, decode_image_from_bytes, encode_png
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
 
@@ -26,7 +28,7 @@ WBModeT  = Literal["none", "grayworld"]
 StatusT  = Literal["queued", "running", "done", "error"]
 
 class CreateJobOptions(BaseModel):
-    # Only segmentation is supported now. Pick backend via `method`.
+    # Only segmentation is supported. Choose backend via `method`.
     method: MethodT = Field(
         "sam",
         description="Segmentation backend: 'sam' (no preprocessing) or 'grabcut' (optional WB/Gamma).",
@@ -42,7 +44,7 @@ class CreateJobOptions(BaseModel):
     )
     repeat: int = Field(
         8, ge=1, le=64,
-        description="Repetition count for CPU load during segmentation.",
+        description="Repetition count to increase CPU load during segmentation.",
     )
 
 class BatchJobOptions(BaseModel):
@@ -55,28 +57,56 @@ class StartJobsBatchReq(BaseModel):
     job_ids: List[int]
 
 # -----------------------------
-# OpenAPI example payloads
+# OpenAPI example payloads (exactly 4 options)
 # -----------------------------
 CREATE_JOB_EXAMPLES = {
+    # 1) SAM (no preprocessing)
     "SAM": {
         "summary": "SAM (no preprocessing)",
-        "value": {"method": "sam", "preprocess": False, "repeat": 8},
+        "value": {"method": "sam", "repeat": 8},
     },
+    # 2) SAM + preprocessing (shown, but SAM will still ignore WB/Gamma)
     "SAM_with_Preproc": {
-        "summary": "SAM + preprocessing (Grayworld + Gamma)",
-        "value": {"method": "sam", "preprocess": True, "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
+        "summary": "SAM + preprocessing (shown; ignored by SAM)",
+        "value": {"method": "sam", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
     },
+    # 3) GrabCut (no preprocessing)
     "GrabCut": {
         "summary": "GrabCut (no preprocessing)",
-        "value": {"method": "grabcut", "preprocess": False, "repeat": 8},
+        "value": {"method": "grabcut", "white_balance": "none", "gamma": 1.0, "repeat": 8},
     },
+    # 4) GrabCut + preprocessing
     "GrabCut_with_Preproc": {
         "summary": "GrabCut + preprocessing (Grayworld + Gamma)",
-        "value": {"method": "grabcut", "preprocess": True, "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
+        "value": {"method": "grabcut", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
     },
 }
 
+CREATE_JOBS_BATCH_EXAMPLES = {
+    "Batch_SAM": {
+        "summary": "Batch: SAM (no preprocessing)",
+        "value": {"method": "sam", "repeat": 8},
+    },
+    "Batch_SAM_with_Preproc": {
+        "summary": "Batch: SAM + preprocessing (shown; ignored by SAM)",
+        "value": {"method": "sam", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
+    },
+    "Batch_GrabCut": {
+        "summary": "Batch: GrabCut (no preprocessing)",
+        "value": {"method": "grabcut", "white_balance": "none", "gamma": 1.0, "repeat": 8},
+    },
+    "Batch_GrabCut_with_Preproc": {
+        "summary": "Batch: GrabCut + preprocessing (Grayworld + Gamma)",
+        "value": {"method": "grabcut", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
+    },
+}
 
+START_JOBS_BATCH_EXAMPLES = {
+    "StartThreeJobs": {
+        "summary": "Start multiple jobs",
+        "value": {"job_ids": [301, 302, 303]},
+    }
+}
 
 # -----------------------------
 # Create (single) — file_id as query input
@@ -85,7 +115,7 @@ CREATE_JOB_EXAMPLES = {
     "",
     status_code=201,
     summary="Create a job (segment)",
-    description="file_id is a query parameter. Options are in the JSON body.",
+    description="`file_id` is a query parameter. Options are provided in the JSON body.",
 )
 def create_job(
     file_id: int = Query(..., description="ID of the file to process"),
@@ -107,10 +137,11 @@ def create_job(
     "/batch",
     status_code=201,
     summary="Create jobs (batch segment)",
-    description="file_ids is a query parameter (multi-value). Options are in the JSON body.",
+    description="`file_ids` is a query parameter (multi-value). Options are provided in the JSON body.",
 )
 def create_jobs_batch(
     file_ids: List[int] = Query(..., description="Multiple file IDs (add items)"),
+    body: BatchJobOptions = Body(..., openapi_examples=CREATE_JOBS_BATCH_EXAMPLES),
     user=Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -146,32 +177,30 @@ def start_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_d
     job.status = "running"; job.started_at = datetime.utcnow(); db.commit()
     try:
         file_rec = db.query(File).get(job.file_id)
-        if not file_rec:
-            raise RuntimeError("file record missing")
+        if not file_rec or not file_rec.content:
+            raise RuntimeError("file content missing")
+        img = decode_image_from_bytes(file_rec.content)
+
         params: Dict[str, Any] = job.params or {}
         method: MethodT = params.get("method", "sam")
         wb: WBModeT = params.get("white_balance", "none")
         gamma: float = float(params.get("gamma", 1.0))
         repeat: int = int(params.get("repeat", 8))
 
-        # SAM: force no preprocessing
+        # Force SAM = no preprocessing
         if method == "sam":
-            wb_use, gamma_use = "none", 1.0
-        else:
-            wb_use, gamma_use = wb, gamma
+            wb, gamma = "none", 1.0
 
         feats, preview, logs = heavy_pipeline(
-            file_rec.path,
+            img_bgr=img,                # <-- use in-memory image
             repeat=repeat,
-            white_balance=wb_use,
-            gamma=gamma_use,
+            white_balance=wb,
+            gamma=gamma,
             method=method,
         )
-        prev_path = f"data/storage/{uuid.uuid4().hex}_preview.png"
-        if not cv2.imwrite(prev_path, preview):
-            raise RuntimeError("failed to save preview")
 
-        res = Result(summary=feats, preview_path=prev_path, logs=logs)
+        preview_bytes = encode_png(preview)  # <-- store preview in DB
+        res = Result(summary=feats, preview_bytes=preview_bytes, logs=logs)
         db.add(res); db.commit(); db.refresh(res)
 
         job.result_id = res.id; job.status = "done"; job.finished_at = datetime.utcnow(); db.commit()
@@ -190,6 +219,7 @@ def start_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_d
     description="Starts multiple jobs. Jobs already running/done are skipped.",
 )
 def start_jobs_batch(
+    body: StartJobsBatchReq = Body(..., openapi_examples=START_JOBS_BATCH_EXAMPLES),
     user=Depends(current_user),
     db: Session=Depends(get_db),
 ):
@@ -216,9 +246,13 @@ def start_jobs_batch(
     return {"count": len(results), "items": results}
 
 # -----------------------------
-# List / Get / Preview (unchanged)
+# List / Get / Preview
 # -----------------------------
-@router.get("", summary="List jobs", description="Supports filtering by status/owner, sorting and pagination.")
+@router.get(
+    "",
+    summary="List jobs",
+    description="Supports filtering by status/owner, sorting and pagination.",
+)
 def list_jobs(
     status: Optional[StatusT] = Query(None, description="Filter by job status."),
     owner: Optional[str]   = Query(None, description="Filter by owner."),
@@ -241,7 +275,11 @@ def list_jobs(
         "items": [{"id": j.id, "status": j.status, "owner": j.owner, "created_at": j.created_at.isoformat(), "params": j.params} for j in items],
     }
 
-@router.get("/{job_id}", summary="Get a job", description="Returns job status, parameters and result id (if finished).")
+@router.get(
+    "/{job_id}",
+    summary="Get a job",
+    description="Returns job status, parameters and result id (if finished).",
+)
 def get_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_db)):
     j = db.query(Job).get(job_id)
     if not j or j.owner != user["username"]:
@@ -251,14 +289,18 @@ def get_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_db)
         "result_id": j.result_id, "created_at": j.created_at.isoformat(),
     }
 
-@router.get("/results/{result_id}/preview", summary="Download result preview", description="Requires owner or admin permission.")
+@router.get(
+    "/results/{result_id}/preview",
+    summary="Download result preview",
+    description="Requires owner or admin permission.",
+)
 def get_preview(result_id: int, user=Depends(current_user), db: Session=Depends(get_db)):
     res = db.query(Result).get(result_id)
-    if not res:
+    if not res or not res.preview_bytes:
         raise HTTPException(status_code=404, detail="result not found")
     job = db.query(Job).filter(Job.result_id == res.id).first()
     if not job:
         raise HTTPException(404, "job not found for result")
     if job.owner != user["username"] and user["role"] != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-    return FileResponse(res.preview_path, media_type="image/png")
+    return StreamingResponse(io.BytesIO(res.preview_bytes), media_type=res.preview_mime or "image/png")

@@ -338,23 +338,28 @@ def leaf_mask(
 #   - add white_balance/gamma/method parameters
 # ----------------------------------------------------------------------
 def heavy_pipeline(
-    img_path: str,
+    img_path: Optional[str] = None,
     *,
+    img_bgr=None,                     
     repeat: int = 10,
     gamma: float = 1.0,
     white_balance: Literal["none", "grayworld"] = "none",
     roi_style: str = "leaf",
     use_sam: bool = False,
-    method: Optional[Literal["sam", "grabcut"]] = None,
+    method: Optional[Literal["sam","grabcut"]] = None,
     **_
 ):
     if method is None:
         method = "sam" if use_sam else "grabcut"
 
     t0 = time.time()
-    img = cv2.imread(img_path)
-    if img is None:
-        raise ValueError(f"cannot read image: {img_path}")
+    if img_bgr is None:
+        # legacy path
+        img = cv2.imread(img_path)
+        if img is None:
+            raise ValueError(f"cannot read image: {img_path}")
+    else:
+        img = img_bgr
 
     mask = None
     for _ in range(int(max(1, repeat))):
@@ -364,7 +369,7 @@ def heavy_pipeline(
     total_px = int(img.shape[0] * img.shape[1])
     coverage = float(leaf_px / total_px * 100.0) if total_px else 0.0
 
-    if(method=="sam"):
+    if method == "sam":
         preview = preview_focus(img, mask, dim_bg=0.25, outline=False)
     else:
         preview = cutout_white(img, mask)
@@ -375,3 +380,18 @@ def heavy_pipeline(
         "lesion": {"area_pct": 0.0, "pixels": 0, "count": 0, "severity": "none/mild"},
     }
     return result, preview, f"method={method}, repeat={repeat}, wb={white_balance}, gamma={gamma}, secs={t1 - t0:.2f}"
+
+
+
+def decode_image_from_bytes(b: bytes):
+    arr = np.frombuffer(b, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("invalid image bytes (cannot decode)")
+    return img
+
+def encode_png(img) -> bytes:
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise ValueError("failed to encode PNG")
+    return buf.tobytes()
