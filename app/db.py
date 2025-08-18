@@ -1,17 +1,20 @@
+# app/db.py
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+psycopg2://leaflab:leaflab@localhost:5432/leaflab"
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+# Create engine/session
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
 
 def init_db() -> None:
-    from .models import Base  # late import prevents circularity
+    from db_models import Base  # <- keep this import INSIDE the function
     Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -20,3 +23,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def self_test() -> None:
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))

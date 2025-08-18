@@ -9,3 +9,9 @@ __pycache__/
 data/
 scripts/
 models/*.tmp
+pgdata
+node_modules/
+
+data/
+models/
+storage/

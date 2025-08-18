@@ -1,9 +1,9 @@
 # app/routers/files.py
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from ..db import get_db
-from ..models import File as FileModel
-from ..deps import current_user
+from db import get_db
+from db_models import File as FileModel
+from deps import current_user
 
 router = APIRouter(prefix="/v1/files", tags=["files"])
 

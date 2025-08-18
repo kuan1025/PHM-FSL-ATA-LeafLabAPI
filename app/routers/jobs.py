@@ -1,9 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Literal, List, Dict, Any
 from datetime import datetime
-import uuid
-import cv2
-import numpy as np
 import io
 
  
@@ -11,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..db import get_db
-from ..models import Job, Result, File
-from ..deps import current_user
-from ..processing import heavy_pipeline, decode_image_from_bytes, encode_png
+from db import get_db
+from db_models import Job, Result, File
+from deps import current_user
+from processing import heavy_pipeline, decode_image_from_bytes, encode_png
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
 
@@ -53,8 +50,6 @@ class BatchJobOptions(BaseModel):
     gamma: float = 1.0
     repeat: int = Field(8, ge=1, le=64)
 
-class StartJobsBatchReq(BaseModel):
-    job_ids: List[int]
 
 # -----------------------------
 # OpenAPI example payloads (exactly 4 options)
@@ -82,31 +77,6 @@ CREATE_JOB_EXAMPLES = {
     },
 }
 
-CREATE_JOBS_BATCH_EXAMPLES = {
-    "Batch_SAM": {
-        "summary": "Batch: SAM (no preprocessing)",
-        "value": {"method": "sam", "repeat": 8},
-    },
-    "Batch_SAM_with_Preproc": {
-        "summary": "Batch: SAM + preprocessing (shown; ignored by SAM)",
-        "value": {"method": "sam", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
-    },
-    "Batch_GrabCut": {
-        "summary": "Batch: GrabCut (no preprocessing)",
-        "value": {"method": "grabcut", "white_balance": "none", "gamma": 1.0, "repeat": 8},
-    },
-    "Batch_GrabCut_with_Preproc": {
-        "summary": "Batch: GrabCut + preprocessing (Grayworld + Gamma)",
-        "value": {"method": "grabcut", "white_balance": "grayworld", "gamma": 1.12, "repeat": 8},
-    },
-}
-
-START_JOBS_BATCH_EXAMPLES = {
-    "StartThreeJobs": {
-        "summary": "Start multiple jobs",
-        "value": {"job_ids": [301, 302, 303]},
-    }
-}
 
 # -----------------------------
 # Create (single) — file_id as query input
@@ -130,34 +100,6 @@ def create_job(
     db.add(job); db.commit(); db.refresh(job)
     return {"id": job.id, "status": job.status, "params": job.params}
 
-# -----------------------------
-# Create (batch) — file_ids as query input
-# -----------------------------
-@router.post(
-    "/batch",
-    status_code=201,
-    summary="Create jobs (batch segment)",
-    description="`file_ids` is a query parameter (multi-value). Options are provided in the JSON body.",
-)
-def create_jobs_batch(
-    file_ids: List[int] = Query(..., description="Multiple file IDs (add items)"),
-    body: BatchJobOptions = Body(..., openapi_examples=CREATE_JOBS_BATCH_EXAMPLES),
-    user=Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    if not file_ids:
-        raise HTTPException(400, "file_ids is empty")
-    created = []
-    for fid in file_ids:
-        f = db.query(File).get(fid)
-        if not f or f.owner != user["username"]:
-            continue
-        job = Job(file_id=fid, owner=user["username"], params=body.model_dump())
-        db.add(job); db.commit(); db.refresh(job)
-        created.append({"id": job.id, "file_id": fid})
-    if not created:
-        raise HTTPException(404, "no jobs created (check file_ids and ownership)")
-    return {"count": len(created), "items": created}
 
 # -----------------------------
 # Start (single, synchronous)
@@ -211,41 +153,6 @@ def start_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_d
         raise HTTPException(500, f"processing failed: {e}")
 
 # -----------------------------
-# Start (batch, synchronous)
-# -----------------------------
-@router.post(
-    "/batch/start",
-    summary="Start jobs (batch, synchronous)",
-    description="Starts multiple jobs. Jobs already running/done are skipped.",
-)
-def start_jobs_batch(
-    body: StartJobsBatchReq = Body(..., openapi_examples=START_JOBS_BATCH_EXAMPLES),
-    user=Depends(current_user),
-    db: Session=Depends(get_db),
-):
-    if not body.job_ids:
-        raise HTTPException(400, "job_ids is empty")
-
-    results = []
-    for jid in body.job_ids:
-        job = db.query(Job).get(jid)
-        if not job or job.owner != user["username"]:
-            results.append({"job_id": jid, "status": "skipped", "reason": "not found/forbidden"})
-            continue
-        if job.status not in ("queued", "error"):
-            results.append({"job_id": jid, "status": job.status, "result_id": job.result_id})
-            continue
-        try:
-            _ = start_job(jid, user, db)
-            job = db.query(Job).get(jid)
-            results.append({"job_id": jid, "status": job.status, "result_id": job.result_id})
-        except HTTPException as he:
-            results.append({"job_id": jid, "status": "error", "error": he.detail})
-        except Exception as e:
-            results.append({"job_id": jid, "status": "error", "error": str(e)})
-    return {"count": len(results), "items": results}
-
-# -----------------------------
 # List / Get / Preview
 # -----------------------------
 @router.get(
@@ -285,7 +192,7 @@ def get_job(job_id: int, user=Depends(current_user), db: Session=Depends(get_db)
     if not j or j.owner != user["username"]:
         raise HTTPException(404, "job not found")
     return {
-        "id": j.id, "status": j.status, "params": j.params, "meta": j.meta,
+        "id": j.id, "status": j.status, "params": j.params,
         "result_id": j.result_id, "created_at": j.created_at.isoformat(),
     }
 

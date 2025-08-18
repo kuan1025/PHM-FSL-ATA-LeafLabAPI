@@ -1,39 +1,62 @@
+version: "3.9"
+
 services:
   db:
     image: postgres:16-alpine
     container_name: leaflab_db
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: leaflab
-      POSTGRES_USER: leaflab
-      POSTGRES_PASSWORD: leaflab
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-leaflab}
+      POSTGRES_USER: ${POSTGRES_USER:-leaflab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leaflab}
     volumes:
       - ./data/pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U leaflab -d leaflab"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   app:
     build:
-      context: .
+      context: ./app
       dockerfile: Dockerfile
-    container_name: leaflab_app
+    image: leaflab-api-dev:local
+    container_name: leaflab_app_dev
+    working_dir: /app
+    env_file:
+      - ./config/.env
     environment:
       DATABASE_URL: postgresql+psycopg2://leaflab:leaflab@db:5432/leaflab
-      SAM_MODEL_TYPE: vit_b
-      SAM_CHECKPOINT: /app/models/sam_vit_b_01ec64.pth
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost,http://localhost:5173}
+      SAM_MODEL_TYPE: ${SAM_MODEL_TYPE:-vit_b}
+      SAM_CHECKPOINT: ${SAM_CHECKPOINT:-/app/models/sam_vit_b_01ec64.pth}
+      UVICORN_RELOAD: "true"
+      WATCHFILES_FORCE_POLLING: "true"
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app:delegated
+      - ./data/models:/app/models:ro
+      - ./data/storage:/app/data/storage
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
-    # Mount models so SAM checkpoint is available (optional)
+      - "8001:8000"
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: leaflab_caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      # - "443:443"
     volumes:
-      - ./models:/app/models:ro
-
-
-
+      - ./config/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv:ro
 
