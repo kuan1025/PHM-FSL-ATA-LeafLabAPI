@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api, apiJSON, API_BASE_URL } from '../api'
+import { api, apiJSON, API_VERSION } from '../api'
 import { getToken } from '../auth'
 
 export default function JobPreview({ jobId }) {
@@ -11,11 +11,10 @@ export default function JobPreview({ jobId }) {
   async function loadJob() {
     setErr('')
     try {
-      const data = await apiJSON(`/v1/jobs/${jobId}`, {}, getToken())
+      const data = await apiJSON(`/${API_VERSION}/jobs/${jobId}`, {}, getToken())
       setJob(data)
       if (data.status === 'done' && data.result_id) {
-        // fetch image as blob (so we can pass Authorization header)
-        const res = await api(`/v1/jobs/results/${data.result_id}/preview`, {}, getToken())
+        const res = await api(`/${API_VERSION}/jobs/results/${data.result_id}/preview`, {}, getToken())
         const blob = await res.blob()
         setImgUrl(URL.createObjectURL(blob))
       } else {
@@ -27,7 +26,7 @@ export default function JobPreview({ jobId }) {
   async function start() {
     setRunning(true); setErr('')
     try {
-      await apiJSON(`/v1/jobs/${jobId}/start`, { method: 'POST' }, getToken())
+      await apiJSON(`/${API_VERSION}/jobs/${jobId}/start`, { method: 'POST' }, getToken())
       await loadJob()
     } catch (e) { setErr(e.message) }
     finally { setRunning(false) }

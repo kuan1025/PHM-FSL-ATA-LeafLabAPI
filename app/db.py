@@ -1,7 +1,8 @@
-# app/db.py
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+
 
 
 DATABASE_URL = os.getenv(
@@ -14,7 +15,7 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
 
 def init_db() -> None:
-    from db_models import Base  # <- keep this import INSIDE the function
+    from db_models import Base
     Base.metadata.create_all(bind=engine)
 
 def get_db():

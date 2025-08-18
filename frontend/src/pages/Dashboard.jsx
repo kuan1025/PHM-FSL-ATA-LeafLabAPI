@@ -1,6 +1,8 @@
+// src/pages/Dashboard.jsx
 import React, { useState } from 'react'
 import { clearToken } from '../auth'
 import FileUpload from '../components/FileUpload'
+import FileManager from '../components/FileManager'   
 import JobCreator from '../components/JobCreator'
 import JobList from '../components/JobList'
 import JobPreview from '../components/JobPreview'
@@ -17,6 +19,9 @@ export default function Dashboard() {
       </div>
 
       <FileUpload onUploaded={(id)=>{ setFileId(id); }} />
+
+      <FileManager onSelectFile={(id)=> setFileId(id)} />
+
       <div className="card">
         <div className="row">
           <label>Current file_id</label>

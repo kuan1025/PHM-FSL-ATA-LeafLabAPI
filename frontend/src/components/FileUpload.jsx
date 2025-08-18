@@ -1,5 +1,6 @@
+// src/components/FileUpload.jsx
 import React, { useState } from 'react'
-import { api } from '../api'
+import { api, API_VERSION } from '../api'
 import { getToken } from '../auth'
 
 export default function FileUpload({ onUploaded }) {
@@ -13,7 +14,7 @@ export default function FileUpload({ onUploaded }) {
     const fd = new FormData()
     fd.append('f', file)
     try {
-      const res = await api('/v1/files/upload', { method: 'POST', body: fd }, getToken())
+      const res = await api(`/${API_VERSION}/files/upload`, { method: 'POST', body: fd }, getToken())
       const data = await res.json()
       onUploaded?.(data.id)
     } catch (e) { setErr(e.message) }
