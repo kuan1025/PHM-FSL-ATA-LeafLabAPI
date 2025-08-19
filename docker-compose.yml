@@ -43,9 +43,9 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8001:8000"
+      - "80:8000"
     expose:
-      - "8001"
+      - "80"
 
   caddy:
     image: caddy:2.8-alpine

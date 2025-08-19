@@ -1,4 +1,3 @@
-# main.py
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,9 +46,9 @@ def _startup():
         db.close()
 
 
-app.include_router(auth_router)
-app.include_router(files_router)
-app.include_router(jobs_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(files_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
 
 
 @app.get("/")
