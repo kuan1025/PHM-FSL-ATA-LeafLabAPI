@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Fully automated deployment of LeafLab Dockerized application on EC2.
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: kuan-prac
+    Description: Name of an existing EC2 KeyPair to enable SSH access.
+  InstanceType:
+    Type: String
+    Default: m5.xlarge
+    Description: EC2 instance type.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-075811427d5564cf9
+    Description: The Subnet ID to deploy the instance into.
+  AmiId:
+    Type: String
+    Default: ami-010876b9ddd38475e
+    Description: The AMI ID for the EC2 instance.
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Default: sg-032bd1ff8cf77dbb9
+    Description: Existing security group ID.
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyName
+      IamInstanceProfile: CAB432-Instance-Role
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Instance'
+        - Key: qut-username
+          Value: n11233885@qut.edu.au
+        - Key: purpose
+          Value: assessment-1
+      UserData: !Base64 |
+        #cloud-config
+        package_update: true
+        package_upgrade: false
+        packages:
+          - ca-certificates
+          - curl
+          - unzip
+          - gnupg
+          - lsb-release
+        runcmd:
+          
+          - [ bash, -lc, "set -euxo pipefail; \
+              export DEBIAN_FRONTEND=noninteractive; \
+              for f in /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock; do \
+                while fuser \"$f\" >/dev/null 2>&1; do echo Waiting for $f; sleep 5; done; \
+              done; \
+              retry(){ for i in $(seq 1 30); do \"$@\" && return 0 || { echo Retry $i; sleep 8; }; done; echo FAIL: $*; return 1; }; \
+              arch=$(dpkg --print-architecture); code=$( . /etc/os-release; echo \"$VERSION_CODENAME\" ); \
+              retry apt-get update; \
+              install -m 0755 -d /etc/apt/keyrings; \
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+              chmod a+r /etc/apt/keyrings/docker.gpg; \
+              echo \"deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${code} stable\" > /etc/apt/sources.list.d/docker.list; \
+              retry apt-get update; \
+              retry apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; \
+              systemctl enable --now docker.service containerd.service; \
+              getent group docker || groupadd docker; usermod -aG docker ubuntu; \
+              command -v docker; docker --version; docker compose version" ]
+
+          - [ bash, -lc, "set -euxo pipefail; \
+              curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip; \
+              unzip -q /tmp/awscliv2.zip -d /tmp; \
+              /tmp/aws/install; \
+              /usr/local/bin/aws --version" ]
+
+  
+          - [ bash, -lc, "set -euxo pipefail; \
+              install -d -o ubuntu -g ubuntu /home/ubuntu/PHM-FSL/config /home/ubuntu/PHM-FSL/frontend/dist /home/ubuntu/PHM-FSL/data/models; \
+              /usr/local/bin/aws s3 cp s3://n11233885-leaflab-deployment/docker-compose.yml /home/ubuntu/PHM-FSL/; \
+              /usr/local/bin/aws s3 cp s3://n11233885-leaflab-deployment/.env /home/ubuntu/PHM-FSL/config/ || true; \
+              /usr/local/bin/aws s3 cp s3://n11233885-leaflab-deployment/Caddyfile.prod /home/ubuntu/PHM-FSL/config/; \
+              /usr/local/bin/aws s3 cp s3://n11233885-leaflab-deployment/models/sam_vit_b_01ec64.pth /home/ubuntu/PHM-FSL/models/ || true; \
+              /usr/local/bin/aws s3 sync s3://n11233885-leaflab-deployment/frontend/dist/ /home/ubuntu/PHM-FSL/frontend/dist/ || true; \
+              chown -R ubuntu:ubuntu /home/ubuntu/PHM-FSL;" ]
+          - [ bash, -lc, "set -euxo pipefail; \
+              cp -f /home/ubuntu/PHM-FSL/config/Caddyfile.prod /home/ubuntu/PHM-FSL/config/Caddyfile || true; \
+              chown -R ubuntu:ubuntu /home/ubuntu/PHM-FSL; \
+              runuser -l ubuntu -c '\
+                /usr/local/bin/aws ecr get-login-password --region ap-southeast-2 \
+                  | docker login --username AWS --password-stdin 901444280953.dkr.ecr.ap-southeast-2.amazonaws.com && \
+                cd ~/PHM-FSL && \
+                docker compose pull || true && \
+                docker compose up -d \
+              '" ]
+
+Outputs:
+  InstanceId:
+    Description: ID of the new EC2 instance
+    Value: !Ref EC2Instance
+  PublicIp:
+    Description: Public IP of the new EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp

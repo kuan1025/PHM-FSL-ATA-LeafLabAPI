@@ -1,4 +1,3 @@
-# app/routers/files.py
 from fastapi import APIRouter, UploadFile, File as Upload, Depends, HTTPException, Response, Query ,status as http_status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -156,7 +155,7 @@ def list_my_files(
         },
     }
 
-@router.get("/{file_id}", summary="Download image (raw bytes)")
+@router.get("/{file_id}", summary="Download image ")
 def download_image(
     file_id: int,
     user: User = Depends(current_user),

@@ -12,6 +12,7 @@ from segment_anything import SamPredictor, sam_model_registry
 # Global SAM
 # SAM : Reference to https://github.com/facebookresearch/segment-anything
 # Grabcut : Ref -> https://docs.opencv.org/3.4/d8/d83/tutorial_py_grabcut.html
+# Grabcut example code :
 # ----------------------------------------------------------------------
 SAM_MODEL_TYPE = os.environ.get("SAM_MODEL_TYPE", "vit_b")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -115,7 +116,7 @@ def _refine_with_trimap_strict(
 ) -> np.ndarray:
     """
     Second-pass GrabCut refinement using a conservative trimap:
-    - sure FG: eroded mask (+ seed union,避免漏前景)
+    - sure FG: eroded mask (+ seed union)
     - sure BG: inverse of dilated mask
     - uncertain: remaining
     """
@@ -171,10 +172,12 @@ def _best_mask_by_iou(masks: np.ndarray, seed_bool: np.ndarray, scores: np.ndarr
     best_idx = -1
     best_iou = -1.0
     seed_area = seed_bool.sum()
+    # Select Best IOU
     for i, m in enumerate(masks):
         inter = np.logical_and(m, seed_bool).sum()
         union = m.sum() + seed_area - inter
         iou = (inter / union) if union > 0 else 0.0
+        
         if iou > best_iou:
             best_iou = iou
             best_idx = i
@@ -186,15 +189,17 @@ def _segment_with_sam(bgr: np.ndarray, seed_u8: np.ndarray) -> np.ndarray:
     if _sam_predictor is None:
         raise ValueError("SAM model not loaded. Check checkpoint path or disable SAM.")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    # bounding box -->>
     _sam_predictor.set_image(rgb)
 
     x, y, w, h = _bbox_from_mask(seed_u8, bgr.shape[:2])
     input_box = np.array([x, y, x + w, y + h])
-    # 可選：中心正點，讓 seed 空時也較穩
+    
     ys, xs = np.where(seed_u8 > 0)
     if len(xs) and len(ys):
         pt = np.array([[xs.mean(), ys.mean()]], dtype=np.float32)
         pl = np.array([1], dtype=np.int32)
+        #  ->> predict
         masks, scores, _ = _sam_predictor.predict(
             point_coords=pt, point_labels=pl, box=input_box, multimask_output=True
         )
@@ -300,7 +305,7 @@ def leaf_mask(
     if abs(gamma - 1.0) > 1e-3:
         bgr = _apply_gamma(bgr, gamma)
 
-    # speed-up resize
+ 
     H0, W0 = bgr.shape[:2]
     scale = 1.0
     if max(H0, W0) > 1024:
@@ -313,6 +318,7 @@ def leaf_mask(
     short = min(H, W)
     open_k  = _kernel_by_ratio(short, 0.003)
     close_k = _kernel_by_ratio(short, 0.008)
+    # -> Generate!!
     seed = cv2.bitwise_or(_exgr_seed(bgr_small, open_k, close_k),
                           _hsv_green_seed(bgr_small, open_k))
 
@@ -322,7 +328,7 @@ def leaf_mask(
     else:
         mask_small = _segment_with_grabcut(bgr_small, seed)
 
-    # keep top-k components (optional k>1)
+    # keep top-k components 
     m_clean = _clean_mask_bool(mask_small > 0, (H, W), k_largest=k_largest)
     mask_small = (m_clean.astype(np.uint8)) * 255
 
@@ -354,7 +360,7 @@ def heavy_pipeline(
 
     t0 = time.time()
     if img_bgr is None:
-        # legacy path
+
         img = cv2.imread(img_path)
         if img is None:
             raise ValueError(f"cannot read image: {img_path}")
