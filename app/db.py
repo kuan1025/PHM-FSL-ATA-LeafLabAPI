@@ -1,29 +1,84 @@
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine.url import make_url
+
+from db_models import Base
+from config import settings
+
+
+DATABASE_URL = settings.DATABASE_URL
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
+url = make_url(DATABASE_URL)
+
+# Locol dev
+PG_SCHEMA = settings.PG_SCHEMA                   
+USE_SSL = settings.PG_SSLMODE
 
 
 
+connect_args = {}
+if USE_SSL:
+    connect_args["sslmode"] = "require"
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg2://leaflab:leaflab@localhost:5432/leaflab"
+connect_args.update({
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 5,
+})
+
+engine = create_engine(
+    url,
+    pool_pre_ping=True,    
+    pool_recycle=300,     
+    pool_size=5,
+    max_overflow=10,
+    connect_args=connect_args,
+    future=True,
 )
 
-# Create engine/session
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
 
-def init_db() -> None:
-    from db_models import Base
-    Base.metadata.create_all(bind=engine)
+@event.listens_for(engine, "connect")
+def _set_search_path(dbapi_conn, conn_record):
+    if PG_SCHEMA:
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute(f'SET search_path TO "{PG_SCHEMA}"')
+        finally:
+            cur.close()
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False,
+                            expire_on_commit=False, future=True)
 
 def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         db.close()
+
+def init_db():
+
+    if PG_SCHEMA:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{PG_SCHEMA}"'))
+        except Exception:
+            pass
+
+
+    with engine.begin() as conn:
+        Base.metadata.create_all(bind=conn)
+
 
 def self_test() -> None:
     with engine.connect() as conn:

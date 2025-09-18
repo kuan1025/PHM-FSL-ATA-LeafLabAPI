@@ -1,57 +1,67 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
-import { setToken } from '../auth'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { apiForm, API_BASE, API_VERSION } from '../api'
+import { setTokens } from '../auth'
 
 export default function Login() {
-    const [username, setU] = useState('kuan')
-    const [password, setP] = useState('password')
-    const [loading, setLoading] = useState(false)
-    const [err, setErr] = useState('')
-    const nav = useNavigate()
+  const [username, setU] = useState('Kuan')
+  const [password, setP] = useState('Password123!')
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState('')
+  const nav = useNavigate()
+  const loc = useLocation()
 
-    async function onSubmit(e) {
-        e.preventDefault();
-        setErr(''); setLoading(true);
-        try {
-            const body = new URLSearchParams({ username, password });
-            const data = await api('/auth/login', {
-                method: 'POST',
-                body: body,
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            });
-            const json_data = await data.json();
-
-            setToken(json_data.access_token);
-            nav('/');
-        } catch (e) {
-            setErr(e.message || 'Login failed');
-        } finally {
-            setLoading(false);
-        }
+  async function onSubmit(e) {
+    e.preventDefault()
+    setErr('')
+    setLoading(true)
+    try {
+      // Username/password login -> tokens may be in data.tokens or top-level
+      const data = await apiForm(`/${API_VERSION}/cognito/login`, { username, password })
+      const { id_token, access_token, refresh_token, expires_in } = data?.tokens || data || {}
+      if (!id_token || !access_token) throw new Error('Login failed: missing token')
+      setTokens({ id_token, access_token, refresh_token, expires_in })
+      const params = new URLSearchParams(loc.search)
+      const redirectTo = params.get('r') || '/dashboard'
+      nav(redirectTo, { replace: true })
+    } catch (e) {
+      setErr(e.message || 'Login failed')
+    } finally {
+      setLoading(false)
     }
+  }
 
-    return (
-        <div className="app">
-            <h1>LeafLab • Login</h1>
-            <div className="card">
-                <form onSubmit={onSubmit}>
-                    <div className="row">
-                        <label>Username</label>
-                        <input value={username} onChange={e => setU(e.target.value)} />
-                    </div>
-                    <div className="row" style={{ marginTop: 8 }}>
-                        <label>Password</label>
-                        <input type="password" value={password} onChange={e => setP(e.target.value)} />
-                    </div>
-                    <div className="row" style={{ marginTop: 12 }}>
-                        <button className="primary" disabled={loading}>{loading ? 'Signing in...' : 'Sign in'}</button>
-                    </div>
-                    {err && <p style={{ color: '#fca5a5', marginTop: 8 }}>{err}</p>}
-                </form>
-            </div>
-        </div>
-    )
+  function loginWithGoogle() {
+    // Optional: preserve desired redirect via ?r=
+    const params = new URLSearchParams(window.location.search)
+    const r = params.get('r') || '/dashboard'
+    window.location.href = `${API_BASE}/${API_VERSION}/cognito/login/google?r=${encodeURIComponent(r)}`
+  }
+
+  return (
+    <div className="app">
+      <h1>LeafLab • Login</h1>
+      <div className="card">
+        <form onSubmit={onSubmit}>
+          <div className="row">
+            <label>Username</label>
+            <input value={username} onChange={e => setU(e.target.value)} />
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setP(e.target.value)} />
+          </div>
+          <div className="row" style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <button className="primary" disabled={loading}>
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+            <button type="button" onClick={loginWithGoogle}>
+              Sign in with Google
+            </button>
+          </div>
+          {err && <p style={{ color: '#fca5a5', marginTop: 8 }}>{err}</p>}
+        </form>
+      </div>
+    </div>
+  )
 }

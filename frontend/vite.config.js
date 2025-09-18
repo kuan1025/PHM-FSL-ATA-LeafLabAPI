@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
 
   const env = loadEnv(mode, process.cwd(), '')
 
-  const target = env.VITE_API_URL || 'http://localhost:80'
+  const target = env.VITE_API_URL || 'https://n11233885.leaflab.cab432.com/'
 
   return {
     plugins: [react()],

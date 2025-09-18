@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react'
 import { api, apiJSON, API_VERSION } from '../api'
-import { getToken } from '../auth'
 
 export default function JobPreview({ jobId }) {
   const [job, setJob] = useState(null)
@@ -11,12 +10,11 @@ export default function JobPreview({ jobId }) {
   async function loadJob() {
     setErr('')
     try {
-      const data = await apiJSON(`/${API_VERSION}/jobs/${jobId}`, {}, getToken())
+      const data = await apiJSON(`/${API_VERSION}/jobs/${jobId}`)
       setJob(data)
       if (data.status === 'done' && data.result_id) {
-        const res = await api(`/${API_VERSION}/jobs/results/${data.result_id}/preview`, {}, getToken())
-        const blob = await res.blob()
-        setImgUrl(URL.createObjectURL(blob))
+        const meta = await apiJSON(`/${API_VERSION}/jobs/results/${data.result_id}/preview`) // {url, mime, size, etag}
+        setImgUrl(meta?.url || '')
       } else {
         setImgUrl('')
       }
@@ -26,7 +24,7 @@ export default function JobPreview({ jobId }) {
   async function start() {
     setRunning(true); setErr('')
     try {
-      await apiJSON(`/${API_VERSION}/jobs/${jobId}/start`, { method: 'POST' }, getToken())
+      await apiJSON(`/${API_VERSION}/jobs/${jobId}/start`, { method: 'POST' })
       await loadJob()
     } catch (e) { setErr(e.message) }
     finally { setRunning(false) }
@@ -40,7 +38,7 @@ export default function JobPreview({ jobId }) {
     <div className="card">
       <h2>4) Job detail</h2>
       {err && <p style={{color:'#fca5a5'}}>{err}</p>}
-      {!job && <small className="muted">Loading...</small>}
+      {!job && <small className="muted">Loading…</small>}
       {job && (
         <>
           <div className="row" style={{justifyContent:'space-between'}}>
@@ -49,7 +47,7 @@ export default function JobPreview({ jobId }) {
               {job.params && <div><small className="muted">params: {JSON.stringify(job.params)}</small></div>}
             </div>
             <div>
-              {job.status !== 'done' && <button className="primary" onClick={start} disabled={running}>{running ? 'Running...' : 'Start'}</button>}
+              {job.status !== 'done' && <button className="primary" onClick={start} disabled={running}>{running ? 'Running…' : 'Start'}</button>}
               <button onClick={loadJob} style={{marginLeft:8}}>Refresh</button>
             </div>
           </div>

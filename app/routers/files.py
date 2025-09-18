@@ -1,39 +1,60 @@
-from fastapi import APIRouter, UploadFile, File as Upload, Depends, HTTPException, Response, Query ,status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, UploadFile, File as Upload, Depends, HTTPException, Response, Query, status as http_status
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
-from io import BytesIO
 from typing import Optional
-from db import get_db
-from db_models import File as FileModel, User
-from deps import current_user
 from datetime import datetime
 import os
-from pydantic import BaseModel, Field
 
-VERSION = os.environ.get("VERSION", "v1")
+from db import get_db
+from db_models import File as FileModel, User
+from deps import current_user  
+from pydantic import BaseModel, Field
+from config import settings
+
+from s3 import (
+    s3_put_bytes,
+    s3_head,
+    s3_presign_get,
+    s3_delete,
+    s3_presign_put,
+)
+
+VERSION = settings.VERSION
 router = APIRouter(prefix=f"/{VERSION}/files", tags=["files"])
 
-MAX_SIZE = 100 * 1024 * 1024  
+MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
-@router.post("/upload", summary="Upload an image (stored in DB)")
-async def upload_image(
-    f: UploadFile = Upload(...),
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    data = await f.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="empty file")
-    if len(data) > MAX_SIZE:
-        raise HTTPException(status_code=413, detail=f"file too large (> {MAX_SIZE} bytes)")
 
+
+class PresignReq(BaseModel):
+    filename: str
+    content_type: Optional[str] = None
+
+class CommitReq(BaseModel):
+    key: str
+    filename: str
+
+@router.post("/presign-upload", summary="Get S3 pre-signed URL (PUT) for direct client upload")
+def presign_upload(req: PresignReq, user: User = Depends(current_user)):
+    safe_name = os.path.basename(req.filename or "file")
+    key = f"uploads/{user.id}/{int(datetime.utcnow().timestamp())}_{safe_name}"
+    url = s3_presign_put(key, req.content_type or "application/octet-stream")
+    return {"key": key, "url": url}
+
+
+@router.post("/commit", summary="HEAD to S3 then persist metadata to DB")
+def commit(req: CommitReq, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    try:
+        meta = s3_head(req.key)
+    except Exception as e:
+        raise HTTPException(400, e)
     rec = FileModel(
         owner_id=user.id,
-        filename=f.filename or "",
-        mime=f.content_type or "application/octet-stream",
-        size_bytes=len(data),
-        content=data,
+        filename=os.path.basename(req.filename or "file"),
+        mime=meta["content_type"],
+        size_bytes=meta["size"],
+        s3_key=req.key,
+        etag=meta["etag"],
     )
     db.add(rec)
     db.commit()
@@ -43,9 +64,13 @@ async def upload_image(
         "filename": rec.filename,
         "mime": rec.mime,
         "size_bytes": rec.size_bytes,
+        "s3_key": rec.s3_key,
+        "etag": rec.etag,
         "created_at": rec.created_at.isoformat(),
     }
 
+
+# ---------- List ----------
 @router.get("/my", summary="List my files (admin sees all)")
 def list_my_files(
     page: int = Query(1, ge=1, description="Page number (1-based)"),
@@ -58,30 +83,22 @@ def list_my_files(
     created_from: Optional[datetime] = Query(None, description="Created at >= (ISO 8601)"),
     created_to: Optional[datetime] = Query(None, description="Created at <= (ISO 8601)"),
     owner_id: Optional[int] = Query(None, description="Admin only: filter by owner_id"),
-    # deps
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
     response: Response = None,
 ):
-    # ---------- RBAC: admin sees all; user sees own ----------
     conds = []
+    print("debug : " ,user.role)
     if user.role != "admin":
         if owner_id is not None:
-            raise HTTPException(
-                status_code=http_status.HTTP_403_FORBIDDEN,
-                detail="Permission denied: admin role required"
-            )
+            raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Permission denied: admin role required")
         conds.append(FileModel.owner_id == user.id)
     else:
         if owner_id is not None:
             conds.append(FileModel.owner_id == owner_id)
 
-    # ---------- Filtering ----------
     if q:
-        conds.append(or_(
-            FileModel.filename.ilike(f"%{q}%"),
-            FileModel.mime.ilike(f"%{q}%"),
-        ))
+        conds.append(or_(FileModel.filename.ilike(f"%{q}%"), FileModel.mime.ilike(f"%{q}%")))
     if mime:
         conds.append(FileModel.mime == mime)
     if size_min is not None:
@@ -93,13 +110,11 @@ def list_my_files(
     if created_to is not None:
         conds.append(FileModel.created_at <= created_to)
 
-    # ---------- Sorting (allowlist) ----------
     allowed_sort = {
         "created_at": FileModel.created_at,
         "id": FileModel.id,
         "filename": FileModel.filename,
         "size_bytes": FileModel.size_bytes,
-        # "mime": FileModel.mime,  
     }
     try:
         field, order = (sort.split(":") + ["asc"])[:2]
@@ -108,34 +123,30 @@ def list_my_files(
     col = allowed_sort.get(field, FileModel.created_at)
     order_by = col.desc() if str(order).lower() == "desc" else col.asc()
 
-    # ---------- Count ----------
     count_stmt = select(func.count()).select_from(FileModel)
     if conds:
         count_stmt = count_stmt.where(*conds)
     total = db.scalar(count_stmt)
 
-    # ---------- Page fetch ----------
     offset = (page - 1) * page_size
-    list_stmt = (
-        select(FileModel)
-        .where(*conds) if conds else select(FileModel)
-    )
+    list_stmt = (select(FileModel).where(*conds) if conds else select(FileModel))
     list_stmt = list_stmt.order_by(order_by).offset(offset).limit(page_size)
     rows = db.execute(list_stmt).scalars().all()
 
     items = [
         {
             "id": r.id,
-            "filename": getattr(r, "filename", "") or "",
+            "filename": r.filename or "",
             "mime": r.mime,
-            "size_bytes": getattr(r, "size_bytes", 0) or 0,
+            "size_bytes": r.size_bytes or 0,
             "created_at": r.created_at.isoformat(),
             "owner_id": r.owner_id,
+            "s3_key": r.s3_key,
+            "etag": r.etag
         }
         for r in rows
     ]
 
-    # ---------- Consistent pagination headers ----------
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
         response.headers["X-Page"] = str(page)
@@ -155,8 +166,10 @@ def list_my_files(
         },
     }
 
-@router.get("/{file_id}", summary="Download image ")
-def download_image(
+
+# ---------- download ----------
+@router.get("/{file_id}", summary="Get presigned download URL")
+def get_download_url(
     file_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -164,17 +177,13 @@ def download_image(
     rec = db.get(FileModel, file_id)
     if not rec:
         raise HTTPException(status_code=404, detail="file not found")
-
     if user.role != "admin" and rec.owner_id != user.id:
-        raise HTTPException(status_code=403, detail="permission denied")  
+        raise HTTPException(status_code=403, detail="permission denied")
+    return {"url": s3_presign_get(rec.s3_key), "mime": rec.mime, "size_bytes": rec.size_bytes, "etag": rec.etag}
 
-    headers = {
-        "Content-Disposition": f'inline; filename="{rec.filename or "file"}"',
-        "Content-Length": str(rec.size_bytes),
-    }
-    return StreamingResponse(BytesIO(rec.content), media_type=rec.mime or "application/octet-stream", headers=headers)
 
-@router.delete("/{file_id}", status_code=200, summary="Delete my file")
+# ---------- Delete（DB + S3） ----------
+@router.delete("/{file_id}", status_code=200, summary="Delete my file (S3 + DB)")
 def delete_image(
     file_id: int,
     user: User = Depends(current_user),
@@ -185,21 +194,22 @@ def delete_image(
         raise HTTPException(status_code=404, detail="file not found")
     if user.role != "admin" and rec.owner_id != user.id:
         raise HTTPException(status_code=403, detail="permission denied")
-    db.delete(rec)
-    db.commit()
-    return {
-        "message": "file deleted successfully",
-        "id": file_id,
-        "deleted_at": datetime.utcnow().isoformat()
-    }
+    try:
+        s3_delete(rec.s3_key)
+    finally:
+        db.delete(rec)
+        db.commit()
+    return {"message": "file deleted successfully", "id": file_id, "deleted_at": datetime.utcnow().isoformat()}
 
+
+# ---------- Update） ----------
 class FileUpdate(BaseModel):
-    filename: str = Field(..., min_length=1, max_length=256, description="New filename (no path)")
+    filename: Optional[str] = Field(None, min_length=1, max_length=256, description="New filename (no path)")
 
-@router.put("/{file_id}/content", summary="Replace file content (and optionally rename)")
+@router.put("/{file_id}/content", summary="Replace file content (and optionally rename) on S3")
 async def replace_file_content(
     file_id: int,
-    f: UploadFile = Upload(...),                               
+    f: UploadFile = Upload(...),
     filename: Optional[str] = Query(None, description="Override stored filename"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -207,7 +217,6 @@ async def replace_file_content(
     rec = db.get(FileModel, file_id)
     if not rec:
         raise HTTPException(status_code=404, detail="file not found")
-
     if user.role != "admin" and rec.owner_id != user.id:
         raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="permission denied")
 
@@ -217,17 +226,20 @@ async def replace_file_content(
     if len(data) > MAX_SIZE:
         raise HTTPException(status_code=413, detail=f"file too large (> {MAX_SIZE} bytes)")
 
+    content_type = f.content_type or rec.mime or "application/octet-stream"
+    s3_put_bytes(rec.s3_key, data, content_type)
+    meta = s3_head(rec.s3_key)
 
-    rec.content = data
-    rec.size_bytes = len(data)
-    rec.mime = f.content_type or rec.mime or "application/octet-stream"
+    rec.size_bytes = meta["size"]
+    rec.mime = meta["content_type"]
+    rec.etag = meta["etag"]
+
 
     new_name = None
     if filename is not None:
         new_name = os.path.basename(filename).strip()
     elif f.filename:
         new_name = os.path.basename(f.filename).strip()
-
     if new_name:
         if len(new_name) > 256:
             raise HTTPException(status_code=400, detail="filename too long")
@@ -235,7 +247,6 @@ async def replace_file_content(
 
     db.commit()
     db.refresh(rec)
-
     return {
         "id": rec.id,
         "filename": rec.filename,
@@ -243,5 +254,7 @@ async def replace_file_content(
         "size_bytes": rec.size_bytes,
         "created_at": rec.created_at.isoformat(),
         "owner_id": rec.owner_id,
+        "etag": rec.etag,
+        "download_url": s3_presign_get(rec.s3_key),
         "message": "file content updated successfully",
     }

@@ -1,21 +1,18 @@
-// src/components/JobList.jsx
 import React, { useEffect, useState } from 'react'
 import { apiJSON, API_VERSION } from '../api'
-import { getToken } from '../auth'
 
 export default function JobList({ onSelect }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
-
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [sort, setSort] = useState('created_at:desc')
-  const [status, setStatus] = useState('')         // queued|running|done|error|""
-  const [method, setMethod] = useState('')         // sam|grabcut|""
-  const [hasResult, setHasResult] = useState('')   // true|false|""
-  const [fileId, setFileId] = useState('')         
+  const [status, setStatus] = useState('')
+  const [method, setMethod] = useState('')
+  const [hasResult, setHasResult] = useState('')
+  const [fileId, setFileId] = useState('')
   const [total, setTotal] = useState(0)
 
   async function load() {
@@ -30,7 +27,7 @@ export default function JobList({ onSelect }) {
       ...(fileId ? { file_id: fileId } : {}),
     })
     try {
-      const data = await apiJSON(`/${API_VERSION}/jobs?` + qs.toString(), {}, getToken())
+      const data = await apiJSON(`/${API_VERSION}/jobs?` + qs.toString())
       setItems(data.items || [])
       setTotal(data.total || 0)
     } catch(e) { setErr(e.message) }
@@ -48,16 +45,16 @@ export default function JobList({ onSelect }) {
   async function del(id) {
     if (!confirm(`Delete job #${id}?`)) return
     try {
-      await apiJSON(`/${API_VERSION}/jobs/${id}`, { method:'DELETE' }, getToken())
+      await apiJSON(`/${API_VERSION}/jobs/${id}`, { method:'DELETE' })
       await load()
     } catch (e) { alert(e.message) }
   }
 
   async function requeue(id) {
     try {
-      await apiJSON(`/${API_VERSION}/jobs/${id}/requeue`, { method:'PUT' }, getToken())
+      await apiJSON(`/${API_VERSION}/jobs/${id}/requeue`, { method:'PUT' })
       await load()
-    } catch (e) { alert(e.message) } 
+    } catch (e) { alert(e.message) }
   }
 
   function resetFilters() {
@@ -71,8 +68,6 @@ export default function JobList({ onSelect }) {
   return (
     <div className="card">
       <h2>3) Jobs</h2>
-
-  
       <div className="row" style={{marginBottom:8}}>
         <label>Status</label>
         <select value={status} onChange={e=>{ setStatus(e.target.value); setPage(1); }}>
@@ -98,13 +93,7 @@ export default function JobList({ onSelect }) {
         </select>
 
         <label>File ID</label>
-        <input
-          type="number"
-          value={fileId}
-          onChange={e=>{ setFileId(e.target.value); setPage(1); }}
-          style={{width:100}}
-          min="0"
-        />
+        <input type="number" value={fileId} onChange={e=>{ setFileId(e.target.value); setPage(1); }} style={{width:100}} min="0" />
 
         <label>Sort</label>
         <select value={sort} onChange={e=>setSort(e.target.value)}>
@@ -121,10 +110,7 @@ export default function JobList({ onSelect }) {
         </select>
 
         <label>Per page</label>
-        <select
-          value={pageSize}
-          onChange={e=>{ setPageSize(Number(e.target.value) || 10); setPage(1); }}
-        >
+        <select value={pageSize} onChange={e=>{ setPageSize(Number(e.target.value) || 10); setPage(1); }}>
           <option value="5">5</option>
           <option value="10">10</option>
           <option value="20">20</option>
@@ -132,7 +118,7 @@ export default function JobList({ onSelect }) {
         </select>
 
         <button onClick={resetFilters}>Reset</button>
-        <button onClick={load} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
+        <button onClick={load} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button>
         <span style={{marginLeft:'auto'}}><small className="muted">Total: {total}</small></span>
       </div>
 
@@ -157,7 +143,6 @@ export default function JobList({ onSelect }) {
 
       {!items.length && <small className="muted">No jobs yet.</small>}
 
-   
       <div className="row" style={{marginTop:8}}>
         <button disabled={!hasPrev || loading} onClick={()=>setPage(p=>p-1)}>Prev</button>
         <span>Page {page} / {last}</span>

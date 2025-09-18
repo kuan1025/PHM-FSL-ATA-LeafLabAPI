@@ -7,6 +7,7 @@ from skimage.morphology import remove_small_holes, remove_small_objects
 from skimage.measure import label
 from scipy.ndimage import binary_fill_holes
 from segment_anything import SamPredictor, sam_model_registry
+from config import settings
 
 # ----------------------------------------------------------------------
 # Global SAM
@@ -14,10 +15,9 @@ from segment_anything import SamPredictor, sam_model_registry
 # Grabcut : Ref -> https://docs.opencv.org/3.4/d8/d83/tutorial_py_grabcut.html
 # Grabcut example code :
 # ----------------------------------------------------------------------
-SAM_MODEL_TYPE = os.environ.get("SAM_MODEL_TYPE", "vit_b")
+SAM_MODEL_TYPE = settings.SAM_MODEL_TYPE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CKPT = os.path.join(BASE_DIR, "..", "models", "sam_vit_b_01ec64.pth")
-SAM_CHECKPOINT = os.environ.get("SAM_CHECKPOINT", DEFAULT_CKPT)
+SAM_CHECKPOINT = settings.SAM_CHECKPOINT
 
 _sam_predictor: Optional[SamPredictor] = None
 try:
@@ -357,8 +357,8 @@ def heavy_pipeline(
 ):
     if method is None:
         method = "sam" if use_sam else "grabcut"
-
     t0 = time.time()
+    
     if img_bgr is None:
 
         img = cv2.imread(img_path)

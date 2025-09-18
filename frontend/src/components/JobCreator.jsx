@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import { apiJSON, API_VERSION } from '../api'
-import { getToken } from '../auth'
 
 export default function JobCreator({ fileId, onCreated }) {
   const [method, setMethod] = useState('sam')
@@ -22,8 +21,8 @@ export default function JobCreator({ fileId, onCreated }) {
     if (!fileId) { setErr('Please upload an image first.'); return }
     setBusy(true); setErr('')
 
-    const validGamma = isNaN(Number(gamma)) ? 1.0 : Number(gamma);
-    const validRepeat = isNaN(Number(repeat)) ? 8 : Number(repeat);
+    const validGamma = isNaN(Number(gamma)) ? 1.0 : Number(gamma)
+    const validRepeat = isNaN(Number(repeat)) ? 8 : Number(repeat)
 
     const body = {
       method,
@@ -32,7 +31,7 @@ export default function JobCreator({ fileId, onCreated }) {
       repeat: validRepeat
     }
     try {
-      const data = await apiJSON(`/${API_VERSION}/jobs?file_id=${fileId}`, { method: 'POST', body }, getToken())
+      const data = await apiJSON(`/${API_VERSION}/jobs?file_id=${fileId}`, { method: 'POST', body })
       onCreated?.(data.id)
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
@@ -69,7 +68,7 @@ export default function JobCreator({ fileId, onCreated }) {
       </div>
       <div className="row" style={{ marginTop: 8 }}>
         <button className="primary" disabled={!fileId || busy} onClick={createJob}>
-          {busy ? 'Creating...' : 'Create'}
+          {busy ? 'Creating…' : 'Create'}
         </button>
       </div>
       <small className="muted">

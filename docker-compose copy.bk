@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: leaflab_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-leaflab}
+      POSTGRES_USER: ${POSTGRES_USER:-leaflab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leaflab}
+    volumes:
+      - ./data/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: leaflab_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: leaflab-api-dev:local
+    container_name: leaflab_app_dev
+    working_dir: /app
+    env_file:
+      - ./config/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://leaflab:leaflab@db:5432/leaflab
+      # Redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CACHE_S3_HEAD_TTL: ${CACHE_S3_HEAD_TTL:-300}     
+      CACHE_PRESIGN_GET_TTL: ${CACHE_PRESIGN_GET_TTL:-300}
+
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost,http://localhost:5173}
+      UVICORN_RELOAD: "true"
+      WATCHFILES_FORCE_POLLING: "true"
+      AWS_REGION: ${AWS_REGION:-ap-southeast-2}
+      S3_BUCKET: ${S3_BUCKET:-n11233885-leaflab-deployment}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-ap-southeast-2_9m0UZzrkr}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-1t14k0u6kpgl5egub5nqpfdt6g}
+      COGNITO_CLIENT_SECRET: ${COGNITO_CLIENT_SECRET:-tluhsmm74d6r6boks4er0jboj4f6bvj5ttos08r7m2uqpbf4tmb}
+      COGNITO_ISSUER: ${COGNITO_ISSUER:-}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ~/.aws:/root/.aws:ro
+      - ./app:/app:delegated
+      - ./data/models:/app/models:ro
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8000"      
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: leaflab_caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv:ro

@@ -1,6 +1,6 @@
 // src/pages/Dashboard.jsx
 import React, { useState } from 'react'
-import { clearToken } from '../auth'
+import { clearTokens } from '../auth'
 import FileUpload from '../components/FileUpload'
 import FileManager from '../components/FileManager'   
 import JobCreator from '../components/JobCreator'
@@ -15,7 +15,7 @@ export default function Dashboard() {
     <div className="app">
       <div className="row" style={{justifyContent:'space-between', marginBottom:12}}>
         <h1>LeafLab</h1>
-        <button onClick={()=>{ clearToken(); location.href='/'; }}>Logout</button>
+        <button onClick={()=>{ clearTokens(); location.href='/'; }}>Logout</button>
       </div>
 
       <FileUpload onUploaded={(id)=>{ setFileId(id); }} />

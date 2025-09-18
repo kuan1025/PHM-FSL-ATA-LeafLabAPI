@@ -1,37 +1,63 @@
-// src/api.js
-const API_BASE = import.meta.env.VITE_API_BASE || "/api";
-export const API_VERSION = import.meta.env.VITE_API_VERSION || "v1"; 
+import { getAccessToken } from './auth';
+
+export const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+export const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+
+
+export function buildUrl(path) {
+  return `${API_BASE}${path}`;
+}
 
 async function parseProblem(res) {
-  let detail = `${res.status} ${res.statusText}`
+  const statusLine = `${res.status} ${res.statusText}`;
   try {
-    const data = await res.json()
-    if (data.detail) detail = data.detail
-    else if (data.title) detail = data.title
-  } catch (ex) {
-    const err = new Error(ex.message);
-    err.status = res.status;
-    throw err;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await res.clone().json();
+      if (data?.detail) return typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      if (data?.title) return data.title;
+      return JSON.stringify(data);
+    } else {
+      const txt = await res.clone().text();
+      return txt || statusLine;
+    }
+  } catch {
+    return statusLine;
   }
-  return detail;  
 }
 
-export async function api(path, { method='GET', headers={}, body } = {}, token) {
-  const finalHeaders = { ...headers }
-  if (token) finalHeaders['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${API_BASE}${path}`, { method, headers: finalHeaders, body })
+function bearerHeader(overrideToken) {
+  const t = overrideToken ?? getAccessToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+
+export async function api(path, { method = 'GET', headers = {}, body } = {}, tokenOverride) {
+  const finalHeaders = { ...headers, ...bearerHeader(tokenOverride) };
+  const res = await fetch(buildUrl(path), { method, headers: finalHeaders, body });
   if (!res.ok) {
-    const msg = await parseProblem(res);
-    throw new Error(msg);
+    throw new Error(await parseProblem(res));
   }
-  return res
+  return res;
 }
 
-export async function apiJSON(path, options={}, token) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) }
-  const finalBody = options.body ? JSON.stringify(options.body) : undefined;
-  const res = await api(path, { ...options, headers, body: finalBody }, token);
-  return res.json()
+
+export async function apiJSON(path, options = {}, tokenOverride) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const body = options.body !== undefined ? JSON.stringify(options.body) : undefined;
+  const res = await api(path, { ...options, headers, body }, tokenOverride);
+  if (res.status === 204) return null;
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? res.json() : res.text();
 }
 
-export const API_BASE_URL = API_BASE
+export async function apiForm(path, form, options = {}, tokenOverride) {
+  const headers = { 'Content-Type': 'application/x-www-form-urlencoded', ...(options.headers || {}) };
+  const body = form instanceof URLSearchParams ? form : new URLSearchParams(form);
+  const res = await api(path, { ...options, method: options.method || 'POST', headers, body }, tokenOverride);
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? res.json() : res.text();
+}
+
+
+export const API_BASE_URL = API_BASE;
