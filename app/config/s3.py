@@ -4,8 +4,8 @@ import logging
 from typing import Dict, Any
 import boto3
 from botocore.client import Config
-from cache import cache_get_json, cache_set_json, cache_delete
-from config import settings
+from cache.cache import cache_get_json, cache_set_json, cache_delete
+from config.config import settings
 
 AWS_REGION = settings.AWS_REGION
 S3_BUCKET  = settings.S3_BUCKET

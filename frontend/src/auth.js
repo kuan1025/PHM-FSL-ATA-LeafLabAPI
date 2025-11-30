@@ -23,5 +23,5 @@ export function getAccessToken() {
 }
 
 export function isAuthed() {
-  return !!getAccessToken();
+  return !!getIdToken();
 }

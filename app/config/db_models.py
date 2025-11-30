@@ -61,5 +61,7 @@ class Job(Base):
     started_at:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     result_id:   Mapped[Optional[int]] = mapped_column(ForeignKey("results.id"), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     owner_user: Mapped["User"] = relationship(back_populates="jobs")

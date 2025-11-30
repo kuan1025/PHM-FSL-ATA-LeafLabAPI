@@ -1,12 +1,14 @@
 import os, logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from db import init_db
+from config.db import init_db
 from routers.files import router as files_router
 from routers.jobs import router as jobs_router
 from routers.auth_cognito import router as cognito_router
-from config import settings
+from routers.dlq import router as dlq_router
+from config.config import settings
+
 
 
 def setup_logging():
@@ -58,7 +60,9 @@ def _startup():
 
 app.include_router(files_router)
 app.include_router(jobs_router)
-app.include_router(cognito_router)
+# Move to cognito-auth-service
+# app.include_router(cognito_router)
+app.include_router(dlq_router)
 
 
 @app.get("/")
@@ -67,7 +71,8 @@ def index():
 
 @app.get("/health")
 def health():
+    if os.getenv("FAIL_HEALTH") == "1":
+        return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     return {"status": "ok"}
-
 
 

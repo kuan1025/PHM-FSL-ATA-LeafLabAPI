@@ -74,5 +74,5 @@ data "aws_iam_policy_document" "deployment_policy" {
 
 resource "aws_s3_bucket_policy" "deployment" {
   bucket = aws_s3_bucket.deployment.id
-  policy = data.aws_iam_policy_document.deployment_policy.json
+  policy = file("${path.module}/bucket_policy.json")
 }

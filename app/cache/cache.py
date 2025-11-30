@@ -1,4 +1,3 @@
-# app/cache.py
 import os
 import json
 import logging
@@ -8,7 +7,7 @@ from urllib.parse import urlparse
 from pymemcache.client.base import Client as MCClient
 from pymemcache.exceptions import MemcacheError
 
-from config import settings
+from config.config import settings
 
 LOG = logging.getLogger("leaflab.cache")
 

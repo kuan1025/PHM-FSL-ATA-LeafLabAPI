@@ -3,8 +3,8 @@ from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.engine.url import make_url
 
-from db_models import Base
-from config import settings
+from config.db_models import Base
+from config.config import settings
 
 
 DATABASE_URL = settings.DATABASE_URL
@@ -78,6 +78,10 @@ def init_db():
 
     with engine.begin() as conn:
         Base.metadata.create_all(bind=conn)
+
+        jobs_table = f'"{PG_SCHEMA}".jobs' if PG_SCHEMA else 'jobs'
+        conn.execute(text(f"ALTER TABLE {jobs_table} ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text(f"ALTER TABLE {jobs_table} ADD COLUMN IF NOT EXISTS failure_reason TEXT"))
 
 
 def self_test() -> None:

@@ -5,21 +5,22 @@ from sqlalchemy import select, func
 from datetime import datetime
 from typing import Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import OperationalError
+from events.job_events import publish_job_requested
 import os
+from datetime import datetime, timezone
 
-from db import get_db ,SessionLocal
-from db_models import Job, Result, File, User
-from deps import current_user  
-from processing import heavy_pipeline, decode_image_from_bytes, encode_png
-from s3 import s3_get_bytes, s3_put_bytes, s3_head, s3_presign_get
+from config.db import get_db 
+from config.db_models import Job, Result, File, User
+from config.deps import current_user  
+from config.s3 import s3_presign_get
 
 VERSION = os.environ.get("VERSION", "v1")
 router = APIRouter(prefix=f"/{VERSION}/jobs", tags=["jobs"])
 
 MethodT  = Literal["sam", "grabcut"]
 WBModeT  = Literal["none", "grayworld"]
-StatusT  = Literal["queued", "running", "done", "error"]
+StatusT  = Literal["queued", "running", "done", "error", "error_dlq"]
+MAX_FAILURES = int(os.getenv("JOB_MAX_FAILURES", "2"))
 
 
 class CreateJobOptions(BaseModel):
@@ -75,130 +76,79 @@ def create_job(
     db.add(job)
     db.commit()
     db.refresh(job)
-    return {"id": job.id, "status": job.status, "params": job.params, "owner_id": job.owner_id}
+    return {
+        "id": job.id,
+        "status": job.status,
+        "params": job.params,
+        "owner_id": job.owner_id,
+        "failure_count": int(job.failure_count or 0),
+        "failure_reason": job.failure_reason,
+    }
 
 
 # -----------------------------
-# Start (single, synchronous)
+# Start 
 # -----------------------------
 @router.post(
     "/{job_id}/start",
-    summary="Start a job (single, synchronous)",
+    summary="Start a job ",
     description="Executes the job immediately and returns the result id (if successful).",
 )
 def start_job(job_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
+
     if not job:
         raise HTTPException(404, "job not found")
 
     _ensure_owner_or_admin(user, job.owner_id, resource="job")
 
+    failure_count = int(job.failure_count or 0)
+    if job.status == "error_dlq" or failure_count >= MAX_FAILURES:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="Job is blocked after repeated failures; ask an administrator to inspect the DLQ before retrying.",
+        )
+
     if job.status not in ("queued", "error"):
         return {"status": job.status, "result_id": job.result_id}
 
-    owner_id = int(user.id)
-    jid = int(job.id)
-    file_id = int(job.file_id)
-
-    job.status = "running"
-    job.started_at = datetime.utcnow()
+    job.status = "queued"
+    job.started_at = None
+    job.finished_at = None
+    job.result_id = None
+    job.failure_reason = None
     db.commit()
 
-    try:
-        db.close()
-    except Exception:
-        pass
+    method = (job.params or {}).get("method", "sam")
+    queue_name = str(method).lower()
 
-
-    with SessionLocal() as s_read:
-        file_rec = s_read.get(File, file_id)
-        if not file_rec or not file_rec.s3_key:
-            with SessionLocal() as s_err:
-                jb = s_err.get(Job, jid)
-                if jb:
-                    jb.status = "error"
-                    jb.finished_at = datetime.utcnow()
-                    s_err.commit()
-            raise HTTPException(500, "file content missing (s3_key)")
-        s3_key = str(file_rec.s3_key)
+    payload = {
+        "job_id": int(job.id),
+        "owner_id": int(job.owner_id),
+        "file_id": int(job.file_id),
+        "params": job.params or {},
+        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        "trace_id": str(job.id),
+        "queue": queue_name,
+        "method": queue_name,
+        "failure_count": failure_count,
+        "failure_reason": job.failure_reason,
+    }
 
     try:
-        # 2) run pipeline
-        img_bytes = s3_get_bytes(s3_key)
-        img = decode_image_from_bytes(img_bytes)
-
-        with SessionLocal() as s_params:
-            j = s_params.get(Job, jid)
-            if not j:
-                raise RuntimeError("job vanished")
-            params: Dict[str, Any] = j.params or {}
-
-        method: MethodT = params.get("method", "sam")
-        wb: WBModeT = params.get("white_balance", "none")
-        gamma: float = float(params.get("gamma", 1.0))
-        repeat: int = int(params.get("repeat", 8))
-        if method == "sam":
-            wb, gamma = "none", 1.0
-        feats, preview, logs = heavy_pipeline(
-            img_bgr=img, repeat=repeat, white_balance=wb, gamma=gamma, method=method
-        )
-
-        preview_bytes = encode_png(preview)
-        preview_key = f"results/{user.id}/{job.id}/preview.png"
-        s3_put_bytes(preview_key, preview_bytes, "image/png")
-        meta = s3_head(preview_key)
-
+        message_id = publish_job_requested(payload)
     except Exception as e:
-        with SessionLocal() as s_err:
-            jb = s_err.get(Job, jid)
-            if jb:
-                jb.status = "error"
-                jb.finished_at = datetime.utcnow()
-                s_err.commit()
-        raise HTTPException(500, f"processing failed: {e}")
+        raise HTTPException(500, f"failed to enqueue job: {e}")
 
-    # -------------------------
-    # (C) rewrite
-    # -------------------------
-    def _write_back():
-        with SessionLocal() as s_w:
-            # 1)  results
-            res = Result(
-                summary=feats,
-                preview_s3_key=preview_key,
-                preview_mime="image/png",
-                preview_size=meta["size"],
-                preview_etag=meta["etag"],
-                logs=logs,
-            )
-            s_w.add(res)
-            s_w.commit()
-            s_w.refresh(res)
+    return {
+        "status": "queued",
+        "job_id": job.id,
+        "message_id": message_id,
+        "poll": f"/{VERSION}/jobs/{job.id}",
+        "failure_count": int(job.failure_count or 0),
+    }
 
-            # 2)  job
-            jb = s_w.get(Job, jid)
-            if not jb:
-                raise RuntimeError("job vanished before finalize")
-            jb.result_id = res.id
-            jb.status = "done"
-            jb.finished_at = datetime.utcnow()
-            s_w.commit()
-            return res.id
-
-    try:
-        result_id = _write_back()
-    except OperationalError:
-        result_id = _write_back()
-    except Exception as e:
-        with SessionLocal() as s_err:
-            jb = s_err.get(Job, jid)
-            if jb:
-                jb.status = "error"
-                jb.finished_at = datetime.utcnow()
-                s_err.commit()
-        raise HTTPException(500, f"db write failed: {e}")
-
-    return {"status": "done", "result_id": result_id}
+    
 
 
 # -----------------------------
@@ -214,8 +164,36 @@ def requeue_job(job_id: int, user: User = Depends(current_user), db: Session = D
     job.started_at = None
     job.finished_at = None
     job.result_id = None
+    job.failure_count = 0
+    job.failure_reason = None
     db.commit()
-    return {"id": job.id, "status": job.status}
+    method = (job.params or {}).get("method", "sam")
+    queue_name = str(method).lower()
+
+    payload = {
+        "job_id": int(job.id),
+        "owner_id": int(job.owner_id),
+        "file_id": int(job.file_id),
+        "params": job.params or {},
+        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        "trace_id": str(job.id),
+        "queue": queue_name,
+        "method": queue_name,
+        "failure_count": 0,
+        "failure_reason": None,
+    }
+
+    try:
+        message_id = publish_job_requested(payload)
+    except Exception as e:
+        raise HTTPException(500, f"failed to enqueue job: {e}")
+    return {
+        "id": job.id,
+        "status": job.status,
+        "failure_count": int(job.failure_count or 0),
+        "failure_reason": job.failure_reason,
+        "message_id": message_id,
+    }
 
 
 # -----------------------------
@@ -284,6 +262,8 @@ def list_jobs(
         "created_at": j.created_at.isoformat(),
         "started_at": j.started_at.isoformat() if j.started_at else None,
         "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+        "failure_count": int(j.failure_count or 0),
+        "failure_reason": j.failure_reason,
     } for j in rows]
 
     if response is not None:
@@ -309,6 +289,8 @@ def get_job(job_id: int, user: User = Depends(current_user), db: Session = Depen
         "created_at": j.created_at.isoformat(),
         "started_at": j.started_at.isoformat() if j.started_at else None,
         "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+        "failure_count": int(j.failure_count or 0),
+        "failure_reason": j.failure_reason,
     }
 
 

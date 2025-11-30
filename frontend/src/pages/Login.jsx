@@ -16,7 +16,7 @@ export default function Login() {
     setErr('')
     setLoading(true)
     try {
-      // Username/password login -> tokens may be in data.tokens or top-level
+     
       const data = await apiForm(`/${API_VERSION}/cognito/login`, { username, password })
       const { id_token, access_token, refresh_token, expires_in } = data?.tokens || data || {}
       if (!id_token || !access_token) throw new Error('Login failed: missing token')
@@ -32,7 +32,7 @@ export default function Login() {
   }
 
   function loginWithGoogle() {
-    // Optional: preserve desired redirect via ?r=
+   
     const params = new URLSearchParams(window.location.search)
     const r = params.get('r') || '/dashboard'
     window.location.href = `${API_BASE}/${API_VERSION}/cognito/login/google?r=${encodeURIComponent(r)}`

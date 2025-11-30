@@ -37,12 +37,30 @@ services:
     volumes:
       - ~/.aws:/root/.aws:ro
       - ./app:/app:delegated
-      - ./data/models:/app/models:ro
     depends_on:
       db:
         condition: service_healthy
     expose:
       - "8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: ./worker/Dockerfile
+    image: leaflab-worker-dev:local
+    container_name: leaflab_worker_dev
+    working_dir: /worker
+    env_file:
+      - ./config/.env.local
+    command: python worker.py
+    volumes:
+      - ~/.aws:/root/.aws:ro
+      - ./worker:/worker:delegated
+      - ./app:/app:delegated
+      - ./data/models:/app/models:ro
+    depends_on:
+      db:
+        condition: service_healthy
 
   caddy:
     image: caddy:2.8-alpine

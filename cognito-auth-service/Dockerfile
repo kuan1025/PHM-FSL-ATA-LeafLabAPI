@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────
-# LeafLab API
+# LeafLab Cognito Auth Service
 # build:
-#   docker build -t leaflab-api:dev ./
-#   docker build --platform=linux/amd64 -t leaflab-api:latest ./
+#   docker build -t leaflab-cognito:dev ./cognito-auth-service
+#   docker build --platform=linux/amd64 -t leaflab-cognito:latest ./cognito-auth-service
 # ─────────────────────────────────────────────
 FROM python:3.11-slim
 
@@ -20,6 +20,4 @@ COPY . .
 
 EXPOSE 80
 
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
-
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]

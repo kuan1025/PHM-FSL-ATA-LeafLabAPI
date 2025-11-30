@@ -5,13 +5,13 @@ from typing import Optional
 from datetime import datetime
 import os
 
-from db import get_db
-from db_models import File as FileModel, User
-from deps import current_user  
+from config.db import get_db
+from config.db_models import File as FileModel, User
+from config.deps import current_user  
 from pydantic import BaseModel, Field
-from config import settings
+from config.config import settings
 
-from s3 import (
+from config.s3 import (
     s3_put_bytes,
     s3_head,
     s3_presign_get,

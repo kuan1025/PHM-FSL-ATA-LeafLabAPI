@@ -1,8 +1,8 @@
 from typing import Dict, Any, List
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from db import get_db
-from db_models import User
+from config.db import get_db
+from config.db_models import User
 from routers.auth_cognito import cognito_current_user  
 
 def _role_from_claims(claims: Dict[str, Any]) -> str:

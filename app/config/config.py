@@ -92,6 +92,16 @@ class Settings(BaseModel):
     CACHE_S3_HEAD_TTL: Optional[int] = None
     CACHE_PRESIGN_GET_TTL: Optional[int] = None
 
+    # SQS queues
+    SQS_SAM_QUEUE_URL: Optional[str] = None
+    SQS_GRABCUT_QUEUE_URL: Optional[str] = None
+    SQS_SAM_DLQ_URL: Optional[str] = None
+    SQS_GRABCUT_DLQ_URL: Optional[str] = None
+    SQS_DISPATCH_QUEUE_URL: Optional[str] = None
+
+    # EventBridge
+    EVENT_BUS_NAME: Optional[str] = None
+
     # App / DB / Models
     VERSION: Optional[str] = None
     DATABASE_URL: Optional[str] = None

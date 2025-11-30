@@ -1,7 +1,8 @@
-import { getAccessToken } from './auth';
+import { getIdToken } from './auth';
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 export const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+export const PRESIGN_ENDPOINT = import.meta.env.VITE_PRESIGN_ENDPOINT || '';
 
 
 export function buildUrl(path) {
@@ -27,7 +28,7 @@ async function parseProblem(res) {
 }
 
 function bearerHeader(overrideToken) {
-  const t = overrideToken ?? getAccessToken();
+  const t = overrideToken ?? getIdToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 

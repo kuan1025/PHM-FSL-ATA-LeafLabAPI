@@ -1,3 +1,5 @@
-terraform init  
-terraform plan 
-terraform apply -auto-approve
+terraform fmt -recursive
+terraform validate
+terraform plan -refresh-only
+terraform plan              
+terraform apply  

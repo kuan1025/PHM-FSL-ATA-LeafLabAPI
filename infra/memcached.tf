@@ -109,6 +109,7 @@ resource "aws_ssm_parameter" "cache_url" {
   value     = local.cache_url
   overwrite = true
   tags      = var.common_tags
+  count     = var.manage_ssm ? 1 : 0
 }
 
 ########################

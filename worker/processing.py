@@ -7,7 +7,7 @@ from skimage.morphology import remove_small_holes, remove_small_objects
 from skimage.measure import label
 from scipy.ndimage import binary_fill_holes
 from segment_anything import SamPredictor, sam_model_registry
-from config import settings
+from config.config import settings
 
 # ----------------------------------------------------------------------
 # Global SAM
